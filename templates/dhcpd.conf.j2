@@ -1,0 +1,50 @@
+# Archivo de configuración isc-dhcp-server (Generado mediante Ansible)
+
+default-lease-time 600;
+max-lease-time 7200;
+authoritative;
+# Declaración de la Subred Local Alumnado
+subnet {{ dhcp_subnetA }} netmask {{ dhcp_netmask }} {
+  range {{ dhcp_range_startA }} {{ dhcp_range_endA }};
+  option subnet-mask {{ dhcp_netmask }};
+  option broadcast-address {{ dhcp_broadcastA }};
+
+  # Configuración de Puerta de Enlace (El propio Servidor Router)
+  option routers {{ dhcp_routerA }};
+
+  # Servidores DNS entregados a los clientes
+  option domain-name-servers {{ dhcp_dns_servers }};
+}
+
+# Declaración de la Subred Local Secretaria
+subnet {{ dhcp_subnetS }} netmask {{ dhcp_netmask }} {
+  range {{ dhcp_range_startS }} {{ dhcp_range_endS }};
+  option subnet-mask {{ dhcp_netmask }};
+  option broadcast-address {{ dhcp_broadcastA }};
+
+  # Configuración de Puerta de Enlace (El propio Servidor Router)
+  option routers {{ dhcp_routerS }};
+
+  # Servidores DNS entregados a los clientes
+  option domain-name-servers {{ dhcp_dns_servers }};
+}
+
+# Declaración de la Subred Local Profesorado
+subnet {{ dhcp_subnetP }} netmask {{ dhcp_netmask }} {
+  range {{ dhcp_range_startP }} {{ dhcp_range_endP }};
+  option subnet-mask {{ dhcp_netmask }};
+  option broadcast-address {{ dhcp_broadcastP }};
+
+  # Configuración de Puerta de Enlace (El propio Servidor Router)
+  option routers {{ dhcp_routerP }};
+
+  # Servidores DNS entregados a los clientes
+  option domain-name-servers {{ dhcp_dns_servers }};
+
+  # MAC serverWindows
+  host serverWindows {
+    hardware ethernet {{ dhcp_MAC }};
+    fixed-address {{ dhcp_ipWS }};
+    option domain-name-servers {{ dhcp_dns_servers }};
+  }
+}

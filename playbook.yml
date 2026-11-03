@@ -1,0 +1,126 @@
+- name: Aprovisionamiento de Servidor Router y DHCP Nativo
+  hosts: all
+  become: true
+  vars:
+    lan_interfaceA: "enp0s8"
+    lan_interfaceS: "enp0s9"
+    lan_interfaceP: "enp0s10"
+    wan_interface: "enp0s3"
+
+    dhcp_subnetA: "192.168.40.0"
+    dhcp_subnetS: "192.168.50.0"
+    dhcp_subnetP: "192.168.60.0"
+
+    dhcp_range_startA: "192.168.40.100"
+    dhcp_range_endA: "192.168.40.200"
+    dhcp_range_startS: "192.168.50.100"
+    dhcp_range_endS: "192.168.50.200"
+    dhcp_range_startP: "192.168.60.100"
+    dhcp_range_endP: "192.168.60.200"
+
+    dhcp_routerA: "192.168.40.2"
+    dhcp_routerS: "192.168.50.2"
+    dhcp_routerP: "192.168.60.2"
+
+    dhcp_broadcastA: "192.168.40.255"
+    dhcp_broadcastS: "192.168.50.255"
+    dhcp_broadcastP: "192.168.60.255"
+
+    dhcp_netmask: "255.255.255.0"
+
+    dhcp_dns_servers: "8.8.8.8, 1.1.1.1"
+    
+    dhcp_MAC: "08:00:27:29:BB:47"
+    dhcp_ipWS: "192.168.60.3"
+
+  tasks:
+    - name: Actualizar el índice de paquetes apt
+      ansible.builtin.apt:
+        update_cache: yes
+        cache_valid_time: 3600
+
+    - name: Instalar paquetes nativos (isc-dhcp-server, iptables e iptables-persistent)
+      ansible.builtin.apt:
+        name:
+          - isc-dhcp-server
+          - iptables
+          - iptables-persistent
+          - net-tools
+        state: present
+
+    # -------------------------------------------------------------
+    # CONFIGURACIÓN DEL ROUTER (IP FORWARDING + NAT)
+    # -------------------------------------------------------------
+    - name: Activar IP Forwarding en el Kernel de Linux
+      ansible.posix.sysctl:
+        name: net.ipv4.ip_forward
+        value: '1'
+        sysctl_set: yes
+        state: present
+        reload: yes
+
+    - name: Configurar regla de MASQUERADE Alumnado
+      ansible.builtin.iptables:
+        table: nat
+        chain: POSTROUTING
+        out_interface: "{{ wan_interface }}"
+        source: "{{ dhcp_subnetA }}/24"
+        jump: MASQUERADE
+        comment: "Regla NAT para salida a Internet de la LAN"
+    
+    - name: Configurar regla de MASQUERADE Secretaria
+      ansible.builtin.iptables:
+        table: nat
+        chain: POSTROUTING
+        out_interface: "{{ wan_interface }}"
+        source: "{{ dhcp_subnetS }}/24"
+        jump: MASQUERADE
+        comment: "Regla NAT para salida a Internet de la LAN"
+    
+    - name: Configurar regla de MASQUERADE Profesorado
+      ansible.builtin.iptables:
+        table: nat
+        chain: POSTROUTING
+        out_interface: "{{ wan_interface }}"
+        source: "{{ dhcp_subnetP }}/24"
+        jump: MASQUERADE
+        comment: "Regla NAT para salida a Internet de la LAN"
+
+    - name: Guardar reglas de iptables para persistencia tras reinicios
+      ansible.builtin.shell: |
+        netfilter-persistent save
+      args:
+        creates: /etc/iptables/rules.v4
+
+    # -------------------------------------------------------------
+    # CONFIGURACIÓN NATIVA DEL SERVIDOR DHCP
+    # -------------------------------------------------------------
+    - name: Configurar la interfaz de escucha en /etc/default/isc-dhcp-server
+      ansible.builtin.template:
+        src: ./templates/isc-dhcp-server.j2
+        dest: /etc/default/isc-dhcp-server
+        owner: root
+        group: root
+        mode: '0644'
+      notify: Reiniciar servicio DHCP
+
+    - name: Configurar el archivo de subred /etc/dhcp/dhcpd.conf
+      ansible.builtin.template:
+        src: ./templates/dhcpd.conf.j2
+        dest: /etc/dhcp/dhcpd.conf
+        owner: root
+        group: root
+        mode: '0644'
+      notify: Reiniciar servicio DHCP
+
+    - name: Asegurar que el servicio isc-dhcp-server esté iniciado y habilitado
+      ansible.builtin.service:
+        name: isc-dhcp-server
+        state: started
+        enabled: yes
+
+  handlers:
+    - name: Reiniciar servicio DHCP
+      ansible.builtin.service:
+        name: isc-dhcp-server
+        state: restarted

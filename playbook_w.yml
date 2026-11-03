@@ -1,0 +1,102 @@
+- name: SERVIDOR - ROUTER Y SERVIDOR DHCP NATIVO DE PROFESORADO
+  hosts: all
+  gather_facts: false
+  vars:
+    lan_networks:
+      - name: profesorado
+        subnet: 192.168.60.0
+        netmask: 255.255.255.0
+        range_start: 192.168.60.201 #Inicio de rango diferente al Ubuntu servser
+        range_end: 192.168.60.250 #Fin de rango diferente al Ubuntu servser
+        gateway: 192.168.60.1
+        dns: 8.8.8.8
+
+  # -------------------------------------------------------------
+  # CONFIGURACIÓN DEL ROUTER (DHCP + IP FORWARDING)
+  # -------------------------------------------------------------
+
+  tasks:
+    - name: Instalar rol DHCP
+      ansible.windows.win_feature:
+        name: DHCP
+        include_management_tools: true
+        state: present
+      register: dhcp_feature
+
+    - name: Reiniciar si el rol lo requiere
+      ansible.windows.win_reboot:
+      when: dhcp_feature.reboot_required
+
+    - name: Habilitar enrutamiento IPv4 (registro)
+      ansible.windows.win_regedit:
+        path: HKLM:\SYSTEM\CurrentControlSet\Services\Tcpip\Parameters
+        name: IPEnableRouter
+        data: 1
+        type: dword
+      register: routing
+
+    - name: Habilitar forwarding en las interfaces
+      ansible.windows.win_powershell:
+        script: |
+          Get-NetIPInterface -AddressFamily IPv4 |
+            Set-NetIPInterface -Forwarding Enabled
+
+    - name: Permitir ping (ICMPv4) para pruebas
+      ansible.windows.win_powershell:
+        script: |
+          Enable-NetFirewallRule -DisplayName "File and Printer Sharing (Echo Request - ICMPv4-In)" `
+            -ErrorAction SilentlyContinue
+
+    - name: Crear ámbitos DHCP
+      ansible.windows.win_powershell:
+        script: |
+          param($name, $subnet, $netmask, $range_start, $range_end)
+          if (-not (Get-DhcpServerv4Scope -ScopeId $subnet -ErrorAction SilentlyContinue)) {
+            Add-DhcpServerv4Scope -Name $name -StartRange $range_start -EndRange $range_end `
+              -SubnetMask $netmask -State Active -LeaseDuration 08:00:00
+          }
+        parameters:
+          name: "{{ item.name }}"
+          subnet: "{{ item.subnet }}"
+          netmask: "{{ item.netmask }}"
+          range_start: "{{ item.range_start }}"
+          range_end: "{{ item.range_end }}"
+      loop: "{{ lan_networks }}"
+
+    - name: Opciones de ámbito (gateway y DNS)
+      ansible.windows.win_powershell:
+        script: |
+          param($subnet, $gateway, $dns)
+          Set-DhcpServerv4OptionValue -ScopeId $subnet -Router $gateway -DnsServer $dns
+        parameters:
+          subnet: "{{ item.subnet }}"
+          gateway: "{{ item.gateway }}"
+          dns: "{{ item.dns }}"
+      loop: "{{ lan_networks }}"
+
+    - name: DHCP solo en la interfaz de profesorado (no en la NAT)
+      ansible.windows.win_powershell:
+        script: |
+          $internas = Get-NetIPAddress -AddressFamily IPv4 |
+            Where-Object { $_.IPAddress -match '^192\.168\.60\.' } |
+            Select-Object -ExpandProperty InterfaceAlias
+          Get-DhcpServerv4Binding | ForEach-Object {
+            Set-DhcpServerv4Binding -InterfaceAlias $_.InterfaceAlias `
+              -BindingState ($internas -contains $_.InterfaceAlias)
+          }
+
+    - name: Evitar aviso de configuración posterior del rol DHCP
+      ansible.windows.win_regedit:
+        path: HKLM:\SOFTWARE\Microsoft\ServerManager\Roles\12
+        name: ConfigurationState
+        data: 2
+        type: dword
+
+    - name: Reiniciar servicio DHCP
+      ansible.windows.win_service:
+        name: DHCPServer
+        state: restarted
+
+    - name: Reiniciar para aplicar IPEnableRouter
+      ansible.windows.win_reboot:
+      when: routing.changed
